@@ -1,0 +1,285 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import matplotlib.pyplot as plt
+import requests
+from time import localtime, strftime
+from PIL import Image
+
+
+st.set_page_config(layout="wide")
+
+#RECUPERATION DATA API
+url = "https://opendata.paris.fr/api/records/1.0/search/?dataset=velib-disponibilite-en-temps-reel%40parisdata&rows=1446&facet=overflowactivation&facet=creditcard&facet=kioskstate&facet=station_state"
+mytime = strftime("%Y-%m-%d %H:%M:%S", localtime())
+ 
+resp = requests.get(url)
+if resp.status_code != 200:
+    print(mytime, " - ", iteration, " - Erreur dans la récupération des données")
+else:
+    data = resp.json()
+    df = pd.DataFrame(columns =['Timer',
+                                'ID',
+                                'Station',
+                                'Code_Station',
+                                'Geo',
+                                'Ville',
+                                'Date',
+                                'Nb_vélo_électrique',
+                                'Nb_vélo_mécanique',
+                                'Nb_de_bornes_en_station',
+                                'Nb_de_vélos_disponibles',
+                                'Nb_de_bornes_disponibles']
+                                )
+    for rec in data['records']:
+        df.loc[len(df)] = [mytime, 
+                            rec['recordid'],
+                            rec['fields']['name'],
+                            rec['fields']['stationcode'],
+                            rec['fields']['coordonnees_geo'],
+                            rec['fields']['nom_arrondissement_communes'],
+                            rec['fields']['duedate'],
+                            rec['fields']['ebike'],
+                            rec['fields']['mechanical'],
+                            rec['fields']['capacity'],
+                            rec['fields']['numbikesavailable'],
+                            rec['fields']['numdocksavailable']
+                           ]
+    if int(data['nhits']) > 0:
+        print(mytime, " - Fin de la récupération, Nb de lignes récupérées: ", data['nhits'])
+    else:
+        print(mytime, " - Pas de données à récupérer.")
+
+#PROCESSING       
+split_geo_df = pd.DataFrame(df['Geo'].tolist(), columns=['Lat', 'Lon'])
+df = pd.concat([df, split_geo_df], axis=1)
+del df['Geo']
+df["Nb_vélo_électrique"] = pd.to_numeric(df["Nb_vélo_électrique"])
+df["Nb_de_vélos_disponibles"] = pd.to_numeric(df["Nb_de_vélos_disponibles"])
+df["Nb_vélo_mécanique"] = pd.to_numeric(df["Nb_vélo_mécanique"])
+df["Nb_de_bornes_en_station"] = pd.to_numeric(df["Nb_de_bornes_en_station"])
+df["Nb_de_bornes_disponibles"] = pd.to_numeric(df["Nb_de_bornes_disponibles"])
+
+df=df.sort_values('Nb_de_bornes_en_station', ascending=True)
+
+option = st.sidebar.selectbox(
+     'Naviguez à travers les données VELIB :',
+     ('Présentation des données VELIB',
+     'Où sont les zones avec le plus de VELIB à disposition ?', 
+     'Visualisez les VELIB dans votre arrondissement', 
+     'Les infos de votre station VELIB'))
+
+    
+#Part SOME STATISTICS FROM VELIB DATA
+
+if option == 'Présentation des données VELIB':
+    
+    #MISE EN FORME STREAMLIT
+    image_1 = Image.open('Logo_Velib.png')
+    image_2 = Image.open('Velib_electrique_Mecanique.png')
+
+
+    col1, col2= st.columns([3,2])
+    col1.image(image_1)
+    col2.image(image_2)
+    "\n"
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.header("Antoine SERREAU")
+        "\n"
+        st.title('VELIB Data')
+
+    with col2:
+        st.header("")
+
+
+    st.title('Les VELIB de Paris en temps réel !')
+
+    st.sidebar.markdown(
+        "Vous pouvez trouver mon code sur mon Github :" + "\n" + "https://github.com/aserreau" + "\n" + "\n" +
+        "Ajoutez moi sur Linkedin : https://www.linkedin.com/in/antserreau/" + "\n" + "\n")
+
+    "\n"
+
+    #METRICS
+    Nb_station = df.count()['Station']        
+    Nb_station_paris = df[(df['Ville'] == 'Paris')].count()['Station']
+    Nb_station_hors_paris = df[(df['Ville'] != 'Paris')].count()['Station']
+    Nb_vélos_utilises_now = df['Nb_de_bornes_disponibles'].sum()
+    Nb_vélos_dispo_now = df['Nb_de_vélos_disponibles'].sum()
+    
+    col1, col2, col3= st.columns(3)
+    col1.metric("Total station Vélib", Nb_station)
+    col2.metric("Nombre de station à Paris", Nb_station_paris)
+    col3.metric("Nombre de station hors Paris", Nb_station_hors_paris)
+    "\n"
+    col1, col2, col3= st.columns(3)
+    col1.metric("Nombre de vélib actuellement en circulation", Nb_vélos_utilises_now)
+    col2.metric("Nombre de vélib actuellement disponible", Nb_vélos_dispo_now)
+    "\n"
+
+    #ANALYSE_DATA_1
+
+    #MAP_1
+    fig_0 = px.scatter_mapbox(df, lat="Lat", lon="Lon",
+                              zoom=10.2,height=450, size='Nb_de_bornes_en_station',
+                              size_max=9, width=900, opacity=0.75,
+                              color_discrete_sequence=['red'],
+                              hover_name='Station',
+                              hover_data = ['Nb_de_vélos_disponibles', 'Nb_vélo_mécanique', 'Nb_vélo_électrique']
+                              )
+    fig_0.update_layout(mapbox_style="open-street-map")
+    fig_0.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
+
+
+
+    #MAP_2
+    df_50_big_stations = df[(df['Nb_de_bornes_en_station'] >= 50)]
+    fig_1 = px.scatter_mapbox(df_50_big_stations, lat="Lat", lon="Lon",
+                              zoom=10.8, height=450, size='Nb_de_bornes_en_station',
+                              size_max=13, width=900, opacity=0.85,
+                              hover_name='Station',
+                              hover_data = ['Nb_de_vélos_disponibles', 'Nb_vélo_mécanique', 'Nb_vélo_électrique']
+                              )
+    fig_1.update_layout(mapbox_style="open-street-map")
+    fig_1.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
+
+    #col1, col2, col3 = st.columns([1,3,1])
+    st.title('Réprésentation géopgraphique des stations VELIB')
+    st.write(fig_0)
+    "\n"
+
+    st.title('Position des 50 plus grandes stations de VELIB')
+    st.write(fig_1)
+    "\n"
+    "\n"
+    a = df.groupby(['Ville']).count()['Station']
+    b = a.where(a>=10)
+    c = b[~b.isnull()].astype(int).sort_values(ascending=False)
+    
+    st.title('Liste des villes comptant plus de 10 stations VELIB')
+    col1, col2, col3 = st.columns([1,3,1])
+    col2.write(c)
+
+    #AFFICHA OU NON DATAFRAME
+    "\n"
+    "\n"
+    if st.radio('Voulez-vous voir le dataframe ?', ['Non', 'Oui'])=='Oui':
+        st.dataframe(df)
+
+if option == 'Où sont les zones avec le plus de VELIB à disposition ?':
+    
+    st.header('Zones avec le plus de VELIB à disposition')
+    #MAP_3
+    fig_2 = px.scatter_mapbox(df, lat="Lat", lon="Lon",
+                              color="Nb_de_vélos_disponibles", size="Nb_de_vélos_disponibles",
+                              color_continuous_scale=px.colors.cyclical.IceFire, zoom=10, height=450, size_max=15,
+                              width=900, opacity=0.9,
+                              hover_name='Station',
+                              hover_data = ['Nb_de_vélos_disponibles', 'Nb_vélo_mécanique', 'Nb_vélo_électrique'],
+                              title = 'Velib disponibles en temps réel')
+    fig_2.update_layout(mapbox_style="open-street-map")
+    fig_2.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
+
+    #col1, col2, col3 = st.columns([1,4,1])
+    st.write(fig_2)
+
+if option == 'Visualisez les VELIB dans votre arrondissement':
+
+    st.header('Les VELIB dans votre arrondissement')
+    "\n"
+    #PROCESSING
+    df_sans_relais =df[~(df['Code_Station'].str.contains('lais'))]
+    df_sans_relais['Arrondissements'] = df_sans_relais['Code_Station'].str[:-3]
+    df_sans_relais['Arrondissements'] = df_sans_relais['Arrondissements'].astype(int)
+    df_sans_relais_1 = df_sans_relais.loc[df_sans_relais['Arrondissements']<=20]
+    df_sans_relais_2 = df_sans_relais.loc[df_sans_relais['Arrondissements']>20]
+    df_sans_relais_1['Arrondissements'].loc[df_sans_relais_1['Arrondissements']<=20]=df_sans_relais_1['Arrondissements'].astype(str)+'eme Arrondissement'
+    df_sans_relais_2['Arrondissements'].loc[df_sans_relais_2['Arrondissements']>20]=df_sans_relais_2['Ville']
+    df_sans_relais_arrondissement = df_sans_relais_1.append(df_sans_relais_2)
+    df_sans_relais_arrondissement['Arrondissements'].loc[df_sans_relais_arrondissement['Arrondissements']=='1eme Arrondissement']='1er Arrondissement'
+
+    liste_arrondissement_ou_ville = df_sans_relais_arrondissement['Arrondissements']
+    liste_arrondissement_ou_ville = liste_arrondissement_ou_ville.sort_values()
+    liste_arrondissement_ou_ville = set(liste_arrondissement_ou_ville)
+    
+    arrondissement = st.selectbox('Choisissez une Arrondissement ou une Ville pour voir ses informations',liste_arrondissement_ou_ville)
+
+    df_vélos_now_arr=df_sans_relais_arrondissement.groupby(['Arrondissements'])
+
+    col1, col2, col3, col4 = st.columns([1,1,1,1])
+    
+    Nb_vélos_now_arr = df_vélos_now_arr['Nb_de_bornes_disponibles'].sum()
+    Metric_nb_velos_utilises_now = Nb_vélos_now_arr[arrondissement]
+    col4.metric("Nombre de bornes disponibles dans l'arrondissement",Metric_nb_velos_utilises_now)
+
+    Nb_vélos_libre_now_arr = df_vélos_now_arr['Nb_de_vélos_disponibles'].sum()
+    Metric_nb_vélos_libre_now_arr = Nb_vélos_libre_now_arr[arrondissement]
+    col1.metric("Nombre total de vélo dispo dans l'arrondissement",Metric_nb_vélos_libre_now_arr)
+
+    Nb_vélos_mécanique_libre_now_arr = df_vélos_now_arr['Nb_vélo_mécanique'].sum()
+    Metric_nb_vélos_mécanique_libre_now_arr = Nb_vélos_mécanique_libre_now_arr[arrondissement]
+    col3.metric("Nombre de vélos élec dispo dans l'arrondissement",Metric_nb_vélos_mécanique_libre_now_arr)
+
+    Nb_vélos_électrique_libre_now_arr = df_vélos_now_arr['Nb_vélo_électrique'].sum()
+    Metric_nb_électrique_libre_now_arr = Nb_vélos_électrique_libre_now_arr[arrondissement]
+    col2.metric("Nombre de vélos méca dispo dans l'arrondissement",Metric_nb_électrique_libre_now_arr)
+
+    "\n"
+    df_map_arrondissement_1 = df_sans_relais_arrondissement.loc[df_sans_relais_arrondissement['Arrondissements']==arrondissement]
+    fig_par_arrondissement = px.scatter_mapbox(df_map_arrondissement_1, lat="Lat", lon="Lon",
+                                    zoom=12,
+                                    height=300,
+                                    size='Nb_de_bornes_en_station',
+                                    size_max=12, width=550, opacity=1, hover_name='Station',
+                                    color_discrete_sequence=['black'],
+                                    hover_data = ['Nb_de_vélos_disponibles', 'Nb_vélo_mécanique', 'Nb_vélo_électrique','Nb_de_bornes_disponibles']
+                                    )
+    fig_par_arrondissement.update_layout(mapbox_style="open-street-map")
+    fig_par_arrondissement.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
+
+    col1, col2, col3= st.columns([1,3,1])
+    col2.write(fig_par_arrondissement)
+
+    
+if option == 'Les infos de votre station VELIB':
+
+    st.header('Les infos de votre station VELIB')
+    "\n"
+    liste_station = df['Station']
+    liste_station = liste_station.sort_values()
+    station = st.selectbox('Choisissez une Station pour voir ses informations',liste_station)
+    df_test = df.loc[df['Station']==station]
+
+    col1, col2, col3, col4, col5 = st.columns([1,1,1,1,1])
+    Nb_velo_electrique_station = df_test['Nb_vélo_électrique']
+    col2.metric("Nombre de vélos élec dispo",Nb_velo_electrique_station)
+    
+    Nb_velo_mecanique_station = df_test['Nb_vélo_mécanique']
+    col3.metric("Nombre de vélos méca dispo",Nb_velo_mecanique_station)
+    
+    Capacite_station = df_test['Nb_de_bornes_en_station']
+    col4.metric("Capacité de la station",Capacite_station)
+
+    Nb_velo_disponibles = df_test['Nb_de_vélos_disponibles']
+    col1.metric("Nombre total de vélos dispo",Nb_velo_disponibles)
+
+    Nb_bornes_disponibles = df_test['Nb_de_bornes_disponibles']
+    col5.metric("Nombre de bornes disponibles",Nb_bornes_disponibles)
+
+    "\n"
+    #MAP_4
+    fig_par_station = px.scatter_mapbox(df_test, lat="Lat", lon="Lon",
+                                        zoom=16,
+                                        height=300,
+                                        size='Nb_de_bornes_en_station',
+                                        size_max=20, width=550, opacity=1, hover_name='Station',
+                                        color_discrete_sequence=['red'],
+                                        hover_data = ['Nb_de_vélos_disponibles', 'Nb_vélo_mécanique', 'Nb_vélo_électrique','Nb_de_bornes_disponibles']
+                                        )
+    fig_par_station.update_layout(mapbox_style="open-street-map")
+    fig_par_station.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
+    col1, col2, col3= st.columns([1,3,1])
+    col2.write(fig_par_station)
